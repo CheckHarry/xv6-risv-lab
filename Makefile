@@ -7,7 +7,7 @@
 
 K=kernel
 U=user
-
+# pgtbltest
 OBJS = \
   $K/entry.o \
   $K/kalloc.o \

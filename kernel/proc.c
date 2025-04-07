@@ -26,6 +26,26 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+
+
+static void setup_usyscall(pagetable_t pagetable) {
+  if (sizeof(struct usyscall) > PGSIZE) {
+    panic("FUCK!");
+  }
+  
+  struct usyscall *mem = kalloc();
+  memset(mem,0,sizeof(struct usyscall));
+  if (mappages(pagetable, USYSCALL, PGSIZE, (uint64)mem, PTE_R|PTE_U) != 0) {
+    panic("FUCK2!");
+  }
+  mem -> pid = 0;
+}
+
+static struct usyscall* get_proc_syscall(pagetable_t pagetable) {
+     return (struct usyscall*)walkaddr(pagetable, USYSCALL); 
+ }
+
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -140,6 +160,14 @@ found:
     return 0;
   }
 
+  // setup usyscall structure
+  struct usyscall *uc = get_proc_syscall(p->pagetable);
+  uc -> pid = p -> pid;
+
+  if (!uc) {
+    panic("FUCK");
+  }
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -171,6 +199,7 @@ freeproc(struct proc *p)
   p->state = UNUSED;
 }
 
+static void setup_usyscall(pagetable_t pagetable);
 // Create a user page table for a given process, with no user memory,
 // but with trampoline and trapframe pages.
 pagetable_t
@@ -202,6 +231,8 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  setup_usyscall(pagetable);
+
   return pagetable;
 }
 
@@ -212,7 +243,8 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  uvmfree(pagetable, sz);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
+  //uvmfree(pagetable, sz);
 }
 
 // a user program that calls exec("/init")
@@ -619,6 +651,7 @@ void
 setkilled(struct proc *p)
 {
   acquire(&p->lock);
+  printf("%d is killed\n", p->pid);
   p->killed = 1;
   release(&p->lock);
 }
