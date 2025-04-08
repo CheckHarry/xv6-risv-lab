@@ -177,13 +177,61 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
+    {
       panic("mappages: remap");
+    }
+      
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
     a += PGSIZE;
     pa += PGSIZE;
   }
+  return 0;
+}
+
+pte_t * walk_big(pagetable_t pagetable , uint64 va) {
+  pte_t *pte;
+
+  pte = &pagetable[PX(2, va)];
+  if ((*pte & PTE_V) == 0) return 0;
+
+  pagetable = (pagetable_t)(PTE2PA(*pte));
+  pte = &pagetable[PX(1, va)];
+
+  if ((*pte & PTE_V) == 0) return 0;
+  // not big bage
+  if ((*pte & PTE_R) == 0) return 0;
+
+  return pte;
+}
+
+int mappages_big(pagetable_t pagetable, uint64 va, uint64 pa, int perm) {
+  pte_t *pte;
+
+  if((va % SUPERPGSIZE) != 0)
+    panic("mappages_big: va not page aligned");
+  
+  pte = &pagetable[PX(2, va)];
+
+  if ((*pte & PTE_V) == 0) {
+    if ((pagetable = (pagetable_t)(kalloc())) == 0) {
+      return -1;
+    }
+    memset(pagetable, 0, PGSIZE);
+    *pte = PA2PTE(pagetable) | PTE_V;
+  } else {
+    pagetable = (pagetable_t)(PTE2PA(*pte));
+  }
+
+  pte = &pagetable[PX(1, va)];
+
+  if ((*pte & PTE_V)) {
+    panic("mappages_big : remap");
+  }
+
+  *pte = PA2PTE(pa) | (PTE_V | PTE_R) | perm;
+
   return 0;
 }
 
@@ -201,6 +249,24 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += sz){
+    // if va % SUPERPAGESIZE == 0 and npages*PGSIZE >= SUPERPAGESIZE , remove whole big page
+    // else do nothing 
+    pte_t *pte_big = walk_big(pagetable, a);
+    if (pte_big) {
+      if (a % SUPERPGSIZE != 0 || (va + npages*PGSIZE - a) < SUPERPGSIZE) {
+        uint64 up = SUPERPGROUNDUP(a);
+        sz = up - a;
+        continue;
+      } 
+      sz = SUPERPGSIZE;
+    
+      if (do_free) {
+        uint64 pa = PTE2PA(*pte_big);
+        kfree_big((void*)pa);
+      }
+      *pte_big = 0;
+      continue;
+    }
     sz = PGSIZE;
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
@@ -262,8 +328,20 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += sz){
-    sz = PGSIZE;
-    mem = kalloc();
+    //printf("a is %p, newsz :%p\n", (void*)a, (void*)newsz);
+    int map_bigpage = ((newsz - a) >= SUPERPGSIZE && a % SUPERPGSIZE == 0 && a != 0);
+    if (map_bigpage) {
+      sz = SUPERPGSIZE;
+      mem = kalloc_big();
+      if (mem == 0) { // if big page alloc fail , fall back
+        sz = PGSIZE;
+        mem = kalloc();
+        map_bigpage = 0;
+      } 
+    } else {
+      sz = PGSIZE;
+      mem = kalloc();
+    }    
     if(mem == 0){
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -271,10 +349,29 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 #ifndef LAB_SYSCALL
     memset(mem, 0, sz);
 #endif
-    if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
-      kfree(mem);
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
+    if (map_bigpage) {
+      //printf("a is %p, down is %p, up is %p\n",(void*)a, (void*)down, (void*)up);
+      //printf("big map va %p to pa %p\n", (void*)down, (void*)mem);
+      if (mappages_big(pagetable, a , (uint64)mem,  PTE_R|PTE_U|xperm) != 0) {
+        kfree_big(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+      //printf("big map va %p to pa %p DONE\n", (void*)down, (void*)mem);
+    }
+    else {
+      //printf("map va %p to pa %p\n", (void*)a, (void*)mem);
+      pte_t *pte = walk_big(pagetable, a);
+      if (pte) {
+        //printf("map va %p to pa %p DONE (By big page)\n", (void*)a, (void*)mem);
+        continue;
+      }
+      if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+        kfree(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+      //printf("map va %p to pa %p DONE\n", (void*)a, (void*)mem);
     }
   }
   return newsz;
@@ -312,6 +409,11 @@ freewalk(pagetable_t pagetable)
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if(pte & PTE_V){
+      if (pte & PTE_R) {
+        uint64 child = PTE2PA(pte);
+        kfree_big((void*)child);
+        continue;
+      }
       panic("freewalk: leaf");
     }
   }
@@ -323,6 +425,7 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
+
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
@@ -346,6 +449,21 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += szinc){
     szinc = PGSIZE;
     szinc = PGSIZE;
+    pte_t *pte_big = walk_big(old, i);
+    if (pte_big) {
+      szinc = SUPERPGSIZE;
+      if ((*pte_big & PTE_V) == 0) panic("uvmcopy: bigpage not present");          
+      pa = PTE2PA(*pte_big);
+      flags = PTE_FLAGS(*pte_big);
+      if ((mem = kalloc_big()) == 0) goto err;
+      memmove(mem, (char*)pa , SUPERPGSIZE);
+      if (mappages_big(new, i, (uint64)mem, flags) != 0) {
+        panic("uvmcopy : kfree_big\n");
+        kfree_big(mem);
+        goto err;
+      }
+      continue;
+    }
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
@@ -488,9 +606,32 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 
 
 #ifdef LAB_PGTBL
+
+#define SHIFT_BIT(level) ((3 - level) * 9)
+void
+pwalk(pagetable_t pagetable, int level, uint64 addr, uint64 va)
+{
+  for(int i = 0; i < 512; i++){
+    uint64 _va = va + (i << SHIFT_BIT(level));
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+        for (int j = 0; j < level + 1; j ++) {
+          printf(" ..");
+      }
+      printf("%p: pte %p pa %p\n", (void*)(_va * 8), (void*)pte , (void*)PTE2PA(pte));
+    }
+    if ((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+      uint64 child = PTE2PA(pte);
+      pwalk((pagetable_t)child, level + 1, addr * 512 + i, _va);
+    } 
+  }
+}
+
 void
 vmprint(pagetable_t pagetable) {
   // your code here
+  printf("page table %p\n", pagetable);
+  pwalk(pagetable,0,0,0);
 }
 #endif
 

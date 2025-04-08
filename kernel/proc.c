@@ -26,6 +26,15 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+
+
+
+
+static struct usyscall* get_proc_syscall(pagetable_t pagetable) {
+     return (struct usyscall*)walkaddr(pagetable, USYSCALL); 
+ }
+
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -140,6 +149,14 @@ found:
     return 0;
   }
 
+  // setup usyscall structure
+  struct usyscall *uc = get_proc_syscall(p->pagetable);
+  if (!uc) {
+    panic("allocproc : uc not allocated");
+  }
+
+  uc -> pid = p -> pid;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -202,6 +219,17 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  struct usyscall *mem = kalloc();
+  if (!mem || mappages(pagetable, USYSCALL, PGSIZE, (uint64)(mem), PTE_R|PTE_U) != 0) {
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
+  memset(mem,0,sizeof(struct usyscall));
+  mem -> pid = 0;
+
   return pagetable;
 }
 
@@ -212,6 +240,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 1);
   uvmfree(pagetable, sz);
 }
 
@@ -619,6 +648,7 @@ void
 setkilled(struct proc *p)
 {
   acquire(&p->lock);
+  printf("%d is killed\n", p->pid);
   p->killed = 1;
   release(&p->lock);
 }
