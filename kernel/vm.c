@@ -8,12 +8,6 @@
 #include "proc.h"
 #include "fs.h"
 
-
-#define debug(...) printf(__VA_ARGS__);
-#ifdef debug
-#undef debug
-#define debug 
-#endif
 /*
  * the kernel's page table.
  */
@@ -184,7 +178,6 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       return -1;
     if(*pte & PTE_V)
     {
-      vmprint(pagetable);
       panic("mappages: remap");
     }
       
@@ -340,6 +333,11 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
     if (map_bigpage) {
       sz = SUPERPGSIZE;
       mem = kalloc_big();
+      if (mem == 0) { // if big page alloc fail , fall back
+        sz = PGSIZE;
+        mem = kalloc();
+        map_bigpage = 0;
+      } 
     } else {
       sz = PGSIZE;
       mem = kalloc();
@@ -413,7 +411,6 @@ freewalk(pagetable_t pagetable)
     } else if(pte & PTE_V){
       if (pte & PTE_R) {
         uint64 child = PTE2PA(pte);
-        printf("flag : %ld\n" , PTE_FLAGS(pte));
         kfree_big((void*)child);
         continue;
       }

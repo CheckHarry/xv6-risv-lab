@@ -28,18 +28,7 @@ struct spinlock wait_lock;
 
 
 
-static void setup_usyscall(pagetable_t pagetable) {
-  if (sizeof(struct usyscall) > PGSIZE) {
-    panic("usyscall : size");
-  }
-  
-  struct usyscall *mem = kalloc();
-  memset(mem,0,sizeof(struct usyscall));
-  if (mappages(pagetable, USYSCALL, PGSIZE, (uint64)mem, PTE_R|PTE_U) != 0) {
-    panic("usyscall : mappages");
-  }
-  mem -> pid = 0;
-}
+
 
 static struct usyscall* get_proc_syscall(pagetable_t pagetable) {
      return (struct usyscall*)walkaddr(pagetable, USYSCALL); 
@@ -199,7 +188,6 @@ freeproc(struct proc *p)
   p->state = UNUSED;
 }
 
-static void setup_usyscall(pagetable_t pagetable);
 // Create a user page table for a given process, with no user memory,
 // but with trampoline and trapframe pages.
 pagetable_t
@@ -231,7 +219,16 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
-  setup_usyscall(pagetable);
+  struct usyscall *mem = kalloc();
+  if (!mem || mappages(pagetable, USYSCALL, PGSIZE, (uint64)(mem), PTE_R|PTE_U) != 0) {
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
+  memset(mem,0,sizeof(struct usyscall));
+  mem -> pid = 0;
 
   return pagetable;
 }
