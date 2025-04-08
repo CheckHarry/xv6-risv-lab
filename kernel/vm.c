@@ -256,20 +256,22 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += sz){
+    // if va % SUPERPAGESIZE == 0 and npages*PGSIZE >= SUPERPAGESIZE , remove whole big page
+    // else do nothing 
     pte_t *pte_big = walk_big(pagetable, a);
     if (pte_big) {
+      if (a % SUPERPGSIZE != 0 || (va + npages*PGSIZE - a) < SUPERPGSIZE) {
+        uint64 up = SUPERPGROUNDUP(a);
+        sz = up - a;
+        continue;
+      } 
+      sz = SUPERPGSIZE;
+    
       if (do_free) {
         uint64 pa = PTE2PA(*pte_big);
         kfree_big((void*)pa);
       }
       *pte_big = 0;
-
-      uint64 up = SUPERPGROUNDUP(a);
-      
-      if (a % SUPERPGSIZE == 0) {
-        up = a + SUPERPGSIZE;
-      } 
-      sz = up - a;
       continue;
     }
     sz = PGSIZE;
@@ -334,7 +336,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += sz){
     //printf("a is %p, newsz :%p\n", (void*)a, (void*)newsz);
-    int map_bigpage = (a % SUPERPGSIZE == 0 && a != 0);
+    int map_bigpage = ((newsz - a) >= SUPERPGSIZE && a % SUPERPGSIZE == 0 && a != 0);
     if (map_bigpage) {
       sz = SUPERPGSIZE;
       mem = kalloc_big();
@@ -409,6 +411,12 @@ freewalk(pagetable_t pagetable)
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if(pte & PTE_V){
+      if (pte & PTE_R) {
+        uint64 child = PTE2PA(pte);
+        printf("flag : %ld\n" , PTE_FLAGS(pte));
+        kfree_big((void*)child);
+        continue;
+      }
       panic("freewalk: leaf");
     }
   }
@@ -420,9 +428,10 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
-  if(sz > SUPERPGSIZE)
-    uvmunmap(pagetable, SUPERPGSIZE, PGROUNDUP(sz)/PGSIZE, 1);
-  freewalk(pagetable);
+
+  if(sz > 0)
+    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+  freewalk(pagetable, 1);
 }
 
 // Given a parent process's page table, copy

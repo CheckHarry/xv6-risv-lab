@@ -9,7 +9,7 @@
 #include "riscv.h"
 #include "defs.h"
 
-#define BIGPAGE_MEM_RESERVE 32 * 1024 * 1024
+#define BIGPAGE_MEM_RESERVE 16 * 1024 * 1024
 
 void freerange(void *pa_start, void *pa_end);
 void freerange_big(void *pa_start, void *pa_end);

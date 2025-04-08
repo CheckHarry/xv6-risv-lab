@@ -30,13 +30,13 @@ struct spinlock wait_lock;
 
 static void setup_usyscall(pagetable_t pagetable) {
   if (sizeof(struct usyscall) > PGSIZE) {
-    panic("FUCK!");
+    panic("usyscall : size");
   }
   
   struct usyscall *mem = kalloc();
   memset(mem,0,sizeof(struct usyscall));
   if (mappages(pagetable, USYSCALL, PGSIZE, (uint64)mem, PTE_R|PTE_U) != 0) {
-    panic("FUCK2!");
+    panic("usyscall : mappages");
   }
   mem -> pid = 0;
 }
@@ -162,11 +162,11 @@ found:
 
   // setup usyscall structure
   struct usyscall *uc = get_proc_syscall(p->pagetable);
-  uc -> pid = p -> pid;
-
   if (!uc) {
-    panic("FUCK");
+    panic("allocproc : uc not allocated");
   }
+
+  uc -> pid = p -> pid;
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -244,7 +244,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmunmap(pagetable, USYSCALL, 1, 0);
-  //uvmfree(pagetable, sz);
+  uvmfree(pagetable, sz);
 }
 
 // a user program that calls exec("/init")
