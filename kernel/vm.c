@@ -431,7 +431,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
-  freewalk(pagetable, 1);
+  freewalk(pagetable);
 }
 
 // Given a parent process's page table, copy
