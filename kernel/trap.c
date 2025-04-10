@@ -65,9 +65,26 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } 
+  else if(r_scause() == 15) {
+    // cow handling logic
+    uint64 fault_addr = r_stval();
+    if (fault_addr >= MAXVA) goto usertrap;
+
+    fault_addr = PGROUNDDOWN(fault_addr);
+    pte_t *pte = walk(p->pagetable, fault_addr, 0);
+    if (!pte) goto usertrap;
+    if (*pte & PTE_COW) {
+      if (replace_cow_page(p->pagetable, fault_addr) < 0) goto usertrap;
+    } else {
+      printf("SHIT not cow");
+      goto usertrap;
+    }
+  }
+  else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    usertrap:
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
     setkilled(p);
