@@ -1,0 +1,14 @@
+Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+a0 hold the format string , what sit int the .data session
+a1 hold f(8)+1
+a2 hold 13
+
+Where is the call to function f in the assembly code for main? Where is the call to g? (Hint: the compiler may inline functions.)
+typically riscv use `jal` instruction to do function call , but when compile on my system , this got optmize to inline 12 into the assembly
+
+At what address is the function printf located?
+
+```
+3e:	690000ef          	jal	ra,6ce <printf>
+```
+printf sit at 0x6ce

@@ -146,6 +146,11 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->handler = 0;
+  p->cur_cnt = 0;
+  p->period = 0;
+  p->enable = 0;
+
   return p;
 }
 
@@ -169,6 +174,9 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->handler = 0;
+  p->cur_cnt = 0;
+  p->period = 0;
 }
 
 // Create a user page table for a given process, with no user memory,

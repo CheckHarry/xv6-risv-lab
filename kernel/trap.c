@@ -77,9 +77,20 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2) {
+    if (p->enable) {
+      if ((++p->cur_cnt) == (p->period)) {
+        p->cur_cnt = 0;
+        p->enable = 0;
+        // call the handler
+        memmove(&p->sigalarm_trapframe, p->trapframe, sizeof(struct trapframe));
+        p->trapframe->epc = p->handler;
+        usertrapret();
+      }
+    }
     yield();
-
+  }
+    
   usertrapret();
 }
 
@@ -216,3 +227,36 @@ devintr()
   }
 }
 
+uint64 sys_sigalarm(void) 
+{
+  uint64 handler_addr;
+  int n;
+
+  argint(0, &n);
+  argaddr(1, &handler_addr);
+
+  if (n < 0) {
+    return -1;
+  }
+  if (n == 0) {
+    myproc()->cur_cnt = 0;
+    myproc()->period = 0;  
+    myproc()->handler = 0;
+    myproc()->enable = 0;  
+  }
+  myproc()->cur_cnt = 0;
+  myproc()->period = n;
+  myproc()->handler = handler_addr;
+  myproc()->enable = 1;
+
+  return 0;
+}
+
+uint64 sys_sigreturn(void) 
+{
+  struct proc *p = myproc();
+  p->enable = 1;
+  uint64 a0 = myproc()->sigalarm_trapframe.a0;
+  memmove(myproc()->trapframe, &myproc()->sigalarm_trapframe, sizeof(struct trapframe));
+  return a0;
+}
