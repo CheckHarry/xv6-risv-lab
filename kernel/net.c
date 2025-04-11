@@ -174,7 +174,11 @@ sys_send(void)
     return -1;
   }
 
-  e1000_transmit(buf, total);
+  if (e1000_transmit(buf, total) == -1) {
+    kfree(buf);
+    printf("send: e1000_transmit\n");
+    return -1;
+  }
 
   return 0;
 }
@@ -237,7 +241,9 @@ arp_rx(char *inbuf)
   memmove(arp->tha, ineth->shost, ETHADDR_LEN);
   arp->tip = inarp->sip;
 
-  e1000_transmit(buf, sizeof(*eth) + sizeof(*arp));
+  if (e1000_transmit(buf, sizeof(*eth) + sizeof(*arp)) == -1) {
+    panic("arp_rx: e1000_transmit\n");
+  }
 
   kfree(inbuf);
 }
