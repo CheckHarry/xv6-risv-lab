@@ -142,11 +142,11 @@ e1000_recv(void)
 
   int head = regs[E1000_RDH];
   int tail = regs[E1000_RDT];
-  printf("head %d, tail %d\n", head, tail);
+  // printf("head %d, tail %d\n", head, tail);
   // for (int i = 0 ; i < RX_RING_SIZE; i ++) {
   //   printf("%d : status %d\n", i, rx_ring[i].status);
   // }
-  for (int i = (tail + 1) % RX_RING_SIZE; i != head; i++)
+  for (int i = (tail + 1) % RX_RING_SIZE; i != head; i = (i + 1) % RX_RING_SIZE)
   {
     if (!(rx_ring[i].status & E1000_RXD_STAT_DD))
     {
