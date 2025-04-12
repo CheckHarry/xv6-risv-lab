@@ -899,7 +899,6 @@ countfree()
 int
 main(int argc, char *argv[])
 {
-  kmemsan_start();
   if(argc != 2)
     usage();
 
@@ -938,7 +937,6 @@ main(int argc, char *argv[])
     dns();
     sleep(2);
     if ((free1 = countfree()) + 32 < free0) {
-      kmemsan_end();
       printf("free: FAILED -- lost too many free pages %d (out of %d)\n", free1, free0);
     } else {
       printf("free: OK\n");

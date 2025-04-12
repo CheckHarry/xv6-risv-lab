@@ -82,28 +82,41 @@ struct mapper_entry {
 };
 
 struct mapper_entry mapper[16];
+struct spinlock mapper_lock;
 char *recv_buf;
 
 void mapper_entry_init() {
+  initlock(&mapper_lock, "mapper_lock");
   for (int i = 0 ; i < 16; i ++) {
-    mapper[i].port = -i;
+    mapper[i].port = -1;
     mapper[i].cb = (struct circular_buffer *)kalloc();
     if (!mapper[i].cb) panic("mapper_entry_init");
     circular_buffer_init(mapper[i].cb);
   }
 }
 
-struct mapper_entry* mapper_alloc() {
+struct mapper_entry* mapper_alloc(int a) {
+  acquire(&mapper_lock);
   for (int i = 0; i < 16; i ++) {
-    if (mapper[i].port == -1) return &mapper[i];
+    if (mapper[i].port == -1) {
+      mapper[i].port = a;
+      release(&mapper_lock);
+      return &mapper[i];
+    }
   }
+  release(&mapper_lock);
   return 0;
 }
 
-struct mapper_entry* mapper_find(int i) {
+struct mapper_entry* mapper_find(int a) {
+  acquire(&mapper_lock);
   for (int i = 0; i < 16; i ++) {
-    if (mapper[i].port == i) return &mapper[i];
+    if (mapper[i].port == a) {
+      release(&mapper_lock);
+      return &mapper[i];
+    }
   }
+  release(&mapper_lock);
   return 0;
 }
 
@@ -127,16 +140,14 @@ sys_bind(void)
   //
   // Your code here.
   //
-  //uint64 addr;
   int n;
 
   argint(0, &n);
 
   if (mapper_find(n)) return -1;
   
-  struct mapper_entry *me = mapper_alloc();
+  struct mapper_entry *me = mapper_alloc(n);
   if (!me) return -1;
-  me->port = n;
 
   return -1;
 }

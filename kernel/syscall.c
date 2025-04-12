@@ -101,15 +101,6 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
-uint64 sys_kmemsan_start(void) {
-  kmem_san_start();
-  return 0;
-}
-
-uint64 sys_kmemsan_end(void) {
-  kmem_san_end();
-  return 0;
-}
 
 #ifdef LAB_NET
 extern uint64 sys_bind(void);
@@ -156,8 +147,6 @@ static uint64 (*syscalls[])(void) = {
 [SYS_pgpte] sys_pgpte,
 [SYS_kpgtbl] sys_kpgtbl,
 #endif
-[SYS_kmemsan_start] sys_kmemsan_start,
-[SYS_kmemsan_end] sys_kmemsan_end,
 };
 
 
