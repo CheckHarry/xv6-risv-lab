@@ -158,7 +158,7 @@ printf(char *fmt, ...)
 
   return 0;
 }
-void backtrace(void);
+
 void
 panic(char *s)
 {
@@ -188,5 +188,23 @@ void backtrace(void)
   while (pgdown <= fp && fp < pgup) {
     printf("%p\n", (void*)*(uint64*)(fp - 8));
     fp = *(((uint64*)fp) - 2);
+  }
+}
+
+void backtrace_write(uint64 *ptr, int len)
+{
+  uint64 fp = r_fp();
+  uint64 pgdown = fp % PGSIZE == 0 ? fp : PGROUNDDOWN(fp);
+  uint64 pgup = pgdown + PGSIZE;
+
+  int i = 0;
+  while (pgdown <= fp && fp < pgup) {
+    ptr[i] = *(uint64*)(fp - 8);
+    fp = *(((uint64*)fp) - 2);
+    if ((i + 1) == len) {
+      ptr[i] = 0;
+      return;
+    }
+    i ++;
   }
 }

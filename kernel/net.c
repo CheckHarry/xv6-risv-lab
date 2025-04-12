@@ -76,14 +76,43 @@ void circular_buffer_destroy(struct circular_buffer *cb) {
   }
 }
 
-struct circular_buffer *mapper[65536];
+struct mapper_entry {
+  int port;
+  struct circular_buffer *cb;
+};
+
+struct mapper_entry mapper[16];
 char *recv_buf;
+
+void mapper_entry_init() {
+  for (int i = 0 ; i < 16; i ++) {
+    mapper[i].port = -i;
+    mapper[i].cb = (struct circular_buffer *)kalloc();
+    if (!mapper[i].cb) panic("mapper_entry_init");
+    circular_buffer_init(mapper[i].cb);
+  }
+}
+
+struct mapper_entry* mapper_alloc() {
+  for (int i = 0; i < 16; i ++) {
+    if (mapper[i].port == -1) return &mapper[i];
+  }
+  return 0;
+}
+
+struct mapper_entry* mapper_find(int i) {
+  for (int i = 0; i < 16; i ++) {
+    if (mapper[i].port == i) return &mapper[i];
+  }
+  return 0;
+}
 
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
   memset(mapper,0,sizeof(mapper));
+  mapper_entry_init();
 }
 
 
@@ -103,17 +132,11 @@ sys_bind(void)
 
   argint(0, &n);
 
-  if (mapper[n]) return -1;
+  if (mapper_find(n)) return -1;
   
-  struct circular_buffer *cb = (struct circular_buffer *)kalloc();
-  if (!cb) return -1;
-  
-  if (circular_buffer_init(cb) < 0) {
-    kfree(cb);
-    return -1;
-  }
-
-  mapper[n] = cb;
+  struct mapper_entry *me = mapper_alloc();
+  if (!me) return -1;
+  me->port = n;
 
   return -1;
 }
@@ -166,7 +189,8 @@ sys_recv(void)
   argaddr(3, &buf); 
   argint(4, &maxlen); 
 
-  if (!mapper[dport]) return -1;
+  struct mapper_entry *me = mapper_find(dport);
+  if (!me) return -1;
 
   int recv_len = 0;
   //acquire(&recvlock);
@@ -177,16 +201,16 @@ sys_recv(void)
     }
 
 
-    acquire(&mapper[dport]->cb_lock);
-    if (!circular_buffer_empty(mapper[dport])) {
+    acquire(&me->cb->cb_lock);
+    if (!circular_buffer_empty(me->cb)) {
       char *recv_buf = kalloc();
       if (!recv_buf) {
-        release(&mapper[dport]->cb_lock);
+        release(&me->cb->cb_lock);
         //release(&recvlock);
         return -1;
       }
 
-      recv_len = circular_buffer_pop(mapper[dport], recv_buf, 128);
+      recv_len = circular_buffer_pop(me->cb, recv_buf, 128);
       struct ip *ip = (struct ip*) recv_buf;
       //if (ip->ip_p != IPPROTO_UDP) panic("only udp");
       struct udp *udp = (struct udp*) (ip + 1);
@@ -199,11 +223,11 @@ sys_recv(void)
       if (either_copyout(1, sport, &s, sizeof(s)) == -1) panic("sys_recv");
       if (either_copyout(1,buf,(void*)payload,recv_len) == -1) panic("sys_recv");
       kfree(recv_buf);
-      release(&mapper[dport]->cb_lock);
+      release(&me->cb->cb_lock);
       return recv_len;
     }
-    //sleep(mapper[dport], &mapper[dport]->cb_lock);
-    release(&mapper[dport]->cb_lock);
+    sleep(me->cb, &me->cb->cb_lock);
+    release(&me->cb->cb_lock);
   }
   //release(&recvlock);
   return -1;
@@ -331,16 +355,16 @@ ip_rx(char *buf, int len)
   if (ip->ip_p == IPPROTO_UDP) {
     struct udp *udp = (struct udp *) (ip + 1);
     short dport = ntohs(udp->dport);
-    if (mapper[dport]) {
+    struct mapper_entry *me = mapper_find(dport);
+    if (me) {
       uint16 len = ntohs(ip->ip_len);
-      struct circular_buffer *cb = mapper[dport];
-      acquire(&mapper[dport]->cb_lock);
-      int res = circular_buffer_push(cb, (const char*)ip, len);
-      release(&mapper[dport]->cb_lock);
+      acquire(&me->cb->cb_lock);
+      int res = circular_buffer_push(me->cb, (const char*)ip, len);
+      release(&me->cb->cb_lock);
       if (res == -2) {
         printf("TOO BIG\n");
       }
-      //wakeup(mapper[dport]);
+      wakeup(me->cb);
     }
   }
   kfree(buf);

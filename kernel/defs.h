@@ -67,6 +67,9 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+void            kalloc_debug();
+void            kmem_san_start();
+void            kmem_san_end();
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -84,6 +87,8 @@ int             pipewrite(struct pipe*, uint64, int);
 int            printf(char*, ...) __attribute__ ((format (printf, 1, 2)));
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
+void            backtrace(void);
+void            backtrace_write(uint64 *, int len);
 
 // proc.c
 int             cpuid(void);
