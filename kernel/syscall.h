@@ -35,3 +35,5 @@
 #define SYS_recv      32
 #define SYS_pgpte     33
 #define SYS_kpgtbl    34
+#define SYS_kmemsan_start   35
+#define SYS_kmemsan_end   36

@@ -19,10 +19,113 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+#define CIRCULAR_BUFFER_SIZE 16
+struct circular_buffer {
+  struct {
+    char buf[128];
+    int len;  
+  } lenb[CIRCULAR_BUFFER_SIZE];
+  struct spinlock cb_lock;
+  uint32 size;
+
+  int start;
+  int cur;
+  int end;
+};
+
+int circular_buffer_init(struct circular_buffer *cb) {
+  initlock(&cb->cb_lock, "buf_lock");
+  cb->start = 0;
+  cb->cur = 0;
+
+  return 0;
+}
+
+int circular_buffer_full(struct circular_buffer *cb) {
+  int full = ((cb->cur + 1) % CIRCULAR_BUFFER_SIZE) == cb->start;
+  return full;
+}
+
+int circular_buffer_empty(struct circular_buffer *cb) {
+  int empty = (cb->cur == cb->start);
+  return empty;
+}
+
+int circular_buffer_push(struct circular_buffer *cb, const char* buf, int len) {
+  if (len > 128) return -2;
+  if (circular_buffer_full(cb)) return -1;
+  memmove(cb->lenb[cb->cur].buf, buf, len);
+  cb->lenb[cb->cur].len = len;
+  cb->cur = (cb->cur + 1) % CIRCULAR_BUFFER_SIZE;
+  return 0;
+}
+
+int circular_buffer_pop(struct circular_buffer *cb, char* buf, int maxlen) {
+  if (cb->start == cb->cur) {
+    return -1;
+  }
+  maxlen = (maxlen > cb->lenb[cb->start].len) ? cb->lenb[cb->start].len : maxlen;
+  memmove(buf, cb->lenb[cb->start].buf, maxlen);
+  cb->start = (cb->start + 1) % CIRCULAR_BUFFER_SIZE;
+  return maxlen;
+}
+
+void circular_buffer_destroy(struct circular_buffer *cb) {
+  for (int i = 0; i < CIRCULAR_BUFFER_SIZE; i ++) {
+    kfree(cb->lenb[i].buf);
+  }
+}
+
+struct mapper_entry {
+  int port;
+  struct circular_buffer *cb;
+};
+
+struct mapper_entry mapper[16];
+struct spinlock mapper_lock;
+char *recv_buf;
+
+void mapper_entry_init() {
+  initlock(&mapper_lock, "mapper_lock");
+  for (int i = 0 ; i < 16; i ++) {
+    mapper[i].port = -1;
+    mapper[i].cb = (struct circular_buffer *)kalloc();
+    if (!mapper[i].cb) panic("mapper_entry_init");
+    circular_buffer_init(mapper[i].cb);
+  }
+}
+
+struct mapper_entry* mapper_alloc(int a) {
+  acquire(&mapper_lock);
+  for (int i = 0; i < 16; i ++) {
+    if (mapper[i].port == -1) {
+      mapper[i].port = a;
+      release(&mapper_lock);
+      return &mapper[i];
+    }
+  }
+  release(&mapper_lock);
+  return 0;
+}
+
+struct mapper_entry* mapper_find(int a) {
+  acquire(&mapper_lock);
+  for (int i = 0; i < 16; i ++) {
+    if (mapper[i].port == a) {
+      release(&mapper_lock);
+      return &mapper[i];
+    }
+  }
+  release(&mapper_lock);
+  return 0;
+}
+
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
+  memset(mapper,0,sizeof(mapper));
+  mapper_entry_init();
 }
 
 
@@ -30,13 +133,21 @@ netinit(void)
 // bind(int port)
 // prepare to receive UDP packets address to the port,
 // i.e. allocate any queues &c needed.
-//
+
 uint64
 sys_bind(void)
 {
   //
   // Your code here.
   //
+  int n;
+
+  argint(0, &n);
+
+  if (mapper_find(n)) return -1;
+  
+  struct mapper_entry *me = mapper_alloc(n);
+  if (!me) return -1;
 
   return -1;
 }
@@ -77,6 +188,59 @@ sys_recv(void)
   //
   // Your code here.
   //
+  int dport;
+  uint64 src;
+  uint64 sport;
+  uint64 buf;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &src);
+  argaddr(2, &sport);  
+  argaddr(3, &buf); 
+  argint(4, &maxlen); 
+
+  struct mapper_entry *me = mapper_find(dport);
+  if (!me) return -1;
+
+  int recv_len = 0;
+  //acquire(&recvlock);
+  while (1) {
+    if (killed(myproc())) {
+      //release(&recvlock);
+      return -1;
+    }
+
+
+    acquire(&me->cb->cb_lock);
+    if (!circular_buffer_empty(me->cb)) {
+      char *recv_buf = kalloc();
+      if (!recv_buf) {
+        release(&me->cb->cb_lock);
+        //release(&recvlock);
+        return -1;
+      }
+
+      recv_len = circular_buffer_pop(me->cb, recv_buf, 128);
+      struct ip *ip = (struct ip*) recv_buf;
+      //if (ip->ip_p != IPPROTO_UDP) panic("only udp");
+      struct udp *udp = (struct udp*) (ip + 1);
+      const char *payload = (const char*) (udp + 1);
+      recv_len = ntohs(udp -> ulen) - sizeof(struct udp);
+      recv_len = recv_len > maxlen ? maxlen : recv_len;
+      uint16 s = ntohs(udp->sport);
+      uint32 p = htonl(ip->ip_src);
+      if (either_copyout(1, src, &p, sizeof(p)) == -1) panic("sys_recv");
+      if (either_copyout(1, sport, &s, sizeof(s)) == -1) panic("sys_recv");
+      if (either_copyout(1,buf,(void*)payload,recv_len) == -1) panic("sys_recv");
+      kfree(recv_buf);
+      release(&me->cb->cb_lock);
+      return recv_len;
+    }
+    sleep(me->cb, &me->cb->cb_lock);
+    release(&me->cb->cb_lock);
+  }
+  //release(&recvlock);
   return -1;
 }
 
@@ -174,7 +338,11 @@ sys_send(void)
     return -1;
   }
 
-  e1000_transmit(buf, total);
+  if (e1000_transmit(buf, total) == -1) {
+    kfree(buf);
+    printf("send: e1000_transmit\n");
+    return -1;
+  }
 
   return 0;
 }
@@ -191,7 +359,26 @@ ip_rx(char *buf, int len)
   //
   // Your code here.
   //
-  
+
+  struct eth *eth = (struct eth *) buf;
+  struct ip *ip = (struct ip *) (eth + 1);
+
+  if (ip->ip_p == IPPROTO_UDP) {
+    struct udp *udp = (struct udp *) (ip + 1);
+    short dport = ntohs(udp->dport);
+    struct mapper_entry *me = mapper_find(dport);
+    if (me) {
+      uint16 len = ntohs(ip->ip_len);
+      acquire(&me->cb->cb_lock);
+      int res = circular_buffer_push(me->cb, (const char*)ip, len);
+      release(&me->cb->cb_lock);
+      if (res == -2) {
+        printf("TOO BIG\n");
+      }
+      wakeup(me->cb);
+    }
+  }
+  kfree(buf);
 }
 
 //
@@ -237,7 +424,9 @@ arp_rx(char *inbuf)
   memmove(arp->tha, ineth->shost, ETHADDR_LEN);
   arp->tip = inarp->sip;
 
-  e1000_transmit(buf, sizeof(*eth) + sizeof(*arp));
+  if (e1000_transmit(buf, sizeof(*eth) + sizeof(*arp)) == -1) {
+    panic("arp_rx: e1000_transmit\n");
+  }
 
   kfree(inbuf);
 }

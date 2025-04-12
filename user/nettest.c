@@ -8,6 +8,8 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
+void kmemsan_start();
+void kmemsan_end();
 //
 // send a single UDP packet (but don't recv() the reply).
 // python3 nettest.py txone can be used to wait for
@@ -435,7 +437,6 @@ ping2()
   }
 
   printf("ping2: OK\n");
-
   return 1;
 }
 
@@ -595,7 +596,6 @@ ping3()
   }
 
   printf("ping3: OK\n");
-
   return 1;
 }
 
