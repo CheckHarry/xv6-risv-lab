@@ -192,6 +192,10 @@ int fileread(struct file *f, uint64 addr, int n)
     if (f->ip->type == T_SYMLINK)
     {
       struct inode *np = follow(f->ip);
+      if (!np) {
+        iunlock(f->ip);
+        return -1;
+      }
       ilock(np);
       if ((r = readi(np, 1, addr, f->off, n)) > 0)
         f->off += r;
@@ -241,6 +245,17 @@ int filewrite(struct file *f, uint64 addr, int n)
     // and 2 blocks of slop for non-aligned writes.
     // this really belongs lower down, since writei()
     // might be writing a device like the console.
+    struct inode *np = f->ip;
+    if (np->type == T_SYMLINK) {
+      ilock(np);
+      struct inode *tmp = follow(np);
+      if (!tmp) {
+        iunlock(np);
+        return -1;
+      }
+      iunlock(np);
+      np = tmp;
+    }
     int max = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
     int i = 0;
     while (i < n)
@@ -250,10 +265,10 @@ int filewrite(struct file *f, uint64 addr, int n)
         n1 = max;
 
       begin_op();
-      ilock(f->ip);
-      if ((r = writei(f->ip, 1, addr + i, f->off, n1)) > 0)
+      ilock(np);
+      if ((r = writei(np, 1, addr + i, f->off, n1)) > 0)
         f->off += r;
-      iunlock(f->ip);
+      iunlock(np);
       end_op();
 
       if (r != n1)
