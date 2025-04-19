@@ -25,6 +25,66 @@ fileinit(void)
   initlock(&ftable.lock, "ftable");
 }
 
+struct inode *follow_once(struct inode *ip) {
+  char path[MAXPATH];
+  if (readi(ip, 0, (uint64)path, 0, MAXPATH) < 0) {
+    return 0;
+  }
+
+  struct inode *np;
+  if ((np = namei(path)) == 0) {
+    return 0;
+  }
+
+  return np;
+}
+
+
+struct inode *follow(struct inode *ip) {
+  // ip must be locked
+  // follow to the end , if encounter a non T_SYMLINK , stop
+  // if a loop is detected , stop
+  struct inode *node_list[20];
+  int i = 0;
+  struct inode *np = follow_once(ip);
+  for (;i < 20;i ++) {
+    node_list[i] = np;
+
+    if (!np) {
+      return 0;
+    }
+
+    if (np->inum == ip->inum) {
+      return 0;
+    }
+
+    ilock(np);
+    if (np->type == T_FILE) {
+      if (np->ref == 0) {
+        return 0;
+      }
+      iunlock(np);
+      return np;
+    } else if (np->type == T_SYMLINK) {
+      for (int j = 0; j < i; j ++) {
+        if (node_list[j]->inum == np->inum) {
+          iunlock(np);
+          return 0;
+        }
+      }
+      node_list[i] = np;
+    } else panic("follow");
+    struct inode *tmp = follow_once(np);
+    iunlock(np);
+    np = tmp;
+  }
+
+  panic("follow");
+
+  // exceed deep
+  return 0;
+}
+
 // Allocate a file structure.
 struct file*
 filealloc(void)
@@ -119,9 +179,25 @@ fileread(struct file *f, uint64 addr, int n)
     r = devsw[f->major].read(1, addr, n);
   } else if(f->type == FD_INODE){
     ilock(f->ip);
-    if((r = readi(f->ip, 1, addr, f->off, n)) > 0)
-      f->off += r;
-    iunlock(f->ip);
+    if (f->ip->type == T_SYMLINK)
+    {
+      struct inode *np = follow(f->ip);
+      if (!np) {
+        iunlock(f->ip);
+        return -1;
+      }
+      ilock(np);
+      if ((r = readi(np, 1, addr, f->off, n)) > 0)
+        f->off += r;
+      iunlock(np);
+      iunlock(f->ip);
+      return r;
+    } else {
+      if ((r = readi(f->ip, 1, addr, f->off, n)) > 0)
+        f->off += r;
+      iunlock(f->ip);
+      return r;
+    }
   } else {
     panic("fileread");
   }
@@ -152,6 +228,17 @@ filewrite(struct file *f, uint64 addr, int n)
     // and 2 blocks of slop for non-aligned writes.
     // this really belongs lower down, since writei()
     // might be writing a device like the console.
+    struct inode *np = f->ip;
+    if (np->type == T_SYMLINK) {
+      ilock(np);
+      struct inode *tmp = follow(np);
+      if (!tmp) {
+        iunlock(np);
+        return -1;
+      }
+      iunlock(np);
+      np = tmp;
+    }
     int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
     int i = 0;
     while(i < n){
@@ -160,10 +247,10 @@ filewrite(struct file *f, uint64 addr, int n)
         n1 = max;
 
       begin_op();
-      ilock(f->ip);
-      if ((r = writei(f->ip, 1, addr + i, f->off, n1)) > 0)
+      ilock(np);
+      if ((r = writei(np, 1, addr + i, f->off, n1)) > 0)
         f->off += r;
-      iunlock(f->ip);
+      iunlock(np);
       end_op();
 
       if(r != n1){

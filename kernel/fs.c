@@ -411,7 +411,41 @@ bmap(struct inode *ip, uint bn)
       if(addr){
         a[bn] = addr;
         log_write(bp);
-      }
+      } else panic("No error handling , is it a bug?");
+    }
+    brelse(bp);
+    return addr;
+  }
+
+  bn -= NINDIRECT;
+  
+  if (bn < NINDIRECT2) {
+    if((addr = ip->addrs[NDIRECT + 1]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      ip->addrs[NDIRECT + 1] = addr;
+    }
+    bp = bread(ip->dev, addr);
+    uint off = bn / (BSIZE / sizeof(uint));
+    uint rem = bn % (BSIZE / sizeof(uint));
+    a = (uint*)bp->data;
+    if ((addr = a[off]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr) {
+        a[off] = addr;
+        log_write(bp);
+      } else panic("bmap");
+    }
+    brelse(bp);
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if ((addr = a[rem]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr) {
+        a[rem] = addr;
+        log_write(bp);
+      } else panic("bmap");
     }
     brelse(bp);
     return addr;
@@ -446,6 +480,26 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if (ip->addrs[NDIRECT + 1]){
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    a = (uint*)bp->data;
+    for (j = 0; j < ((BSIZE / sizeof(uint))); j ++) {
+      if(a[j]) {
+        struct buf *bp2 = bread(ip->dev, a[j]);
+        uint *b = (uint*)bp2->data;
+        for (int k = 0; k < ((BSIZE / sizeof(uint))); k ++) {
+          if (b[k])
+            bfree(ip->dev, b[k]);
+        }
+        brelse(bp2);
+        bfree(ip->dev, a[j]);
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
