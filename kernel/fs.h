@@ -59,3 +59,9 @@ struct dirent {
   char name[DIRSIZ];
 };
 
+// symlink
+
+struct symlinkent {
+  char ptr[128];
+};
+
